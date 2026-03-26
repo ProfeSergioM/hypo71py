@@ -402,18 +402,22 @@ def SINGLE(stations, pick_dict, velocity_model,
 		(default: 0)
 
 	:return:
-		(LONEP, LATEP, Z, ORG, SE, station_phases, QSD, RMS) tuple
+		(LONEP, LATEP, Z, ORG, SE, station_phases, QSD, NI, RMS) tuple
 		- LONEP: float, longitude of epicenter
 		- LATEP: float, latitude of epicenter
 		- Z: float, hypocentral depth
 		- ORG: instance of :class:`obspy.UTCDateTime`, origin time
+		  (None if non-finite)
 		- SE: 1-D array [4], standard deviations on X, Y, Z position
 		  and time
-		- station_phases: instance of :class:`robspy.StationPhases`,
+		- station_phases: instance of :class:`StationPhases`,
 		  containing residuals, distances, azimuths, weights
 		  and angles of incidence
-		- QSD (char QS, char QD): quality class of hypocentral solution
-		- RMS 
+		- QSD: str (char QS + char QD), quality class of hypocentral
+		  solution; 'DD' if insufficient data
+		- NI: int, number of iterations performed
+		- RMS: float, root-mean-square travel-time residual (seconds);
+		  0.0 if insufficient data
 	"""
 	from hypo71py.model.time import parse_datetime
 	from .azwtos import AZWTOS
@@ -475,10 +479,10 @@ def SINGLE(stations, pick_dict, velocity_model,
 		KNST = 0
 
 	#treats S-P as if we only had P obervations
- 	#if use_s_minus_p:
+	#if use_s_minus_p:
 	#pick_dict = promote_to_sp_pairs(pick_dict)
 	if use_s_minus_p:
-	    pick_dict = promote_to_sp_pairs(pick_dict)
+		pick_dict = promote_to_sp_pairs(pick_dict)
 	## Set up array with "TEST" variables
 	## Default HYPO71 values
 	TEST_DEF = np.zeros(20, dtype='f')
@@ -906,7 +910,7 @@ def SINGLE(stations, pick_dict, velocity_model,
 			#IEXIT = 1
 			QSD = 'DD'
 			return (0., 0., 0., UTCDateTime('0001-01-01 00:00:00'),
-					SE, station_phases, QSD, NI)
+					SE, station_phases, QSD, NI, 0.)
 
 		if verbose:
 			print('NI=%d, NDEC=%d' % (NI, NDEC))
@@ -1458,6 +1462,11 @@ def SINGLE(stations, pick_dict, velocity_model,
 				(XMEAN, Y, SE, FLIM) = SWMREG(X, WT, KSMP, FNO, ISKP, KF, KZ,
 										TEST[2], TEST[5], verbose=(IPRN==3))
 				## ------- AVOID CORRECTING DEPTH IF HORIZONTAL CHANGE IS LARGE ----------
+				# NOTE: Fortran compares Y(1)**2+Y(2)**2 against TEST(2), where TEST(2)
+				# was already squared in input1 (threshold = max_horizontal_adjustment_
+				# for_depth_adjustment**2 = TEST[1] = 100 for default of 10 km).
+				# Using the unsquared parameter here makes the threshold ~3x tighter.
+				# Flagged for verification against Fortran reference.
 				FIXED_DEPTH_SOLUTION = False
 				if Y[0]**2 + Y[1]**2 >= max_horizontal_adjustment_for_depth_adjustment:
 					FIXED_DEPTH_SOLUTION = True
@@ -1800,24 +1809,27 @@ def SINGLE(stations, pick_dict, velocity_model,
 	DMIN = DELTA.min()
 	CLASS = ['A', 'B', 'C', 'D']
 
-	OFD = max( 5., Z)
-	TFD = 2 * Z
+	OFD = max(5., Z)
+	TFD = max(10., 2 * Z)
 	JS = 4
-	if RMS < 0.5 and ERH < 5:
+	# Note: these are independent thresholds (sequential IFs in Fortran),
+	# not elif — each can tighten the class further.
+	if RMS < 0.5 and ERH <= 5.0:
 		JS = 3
-	elif RMS < 0.3 and ERH <= 2.5 and SE[2] <= 5:
+	if RMS < 0.3 and ERH <= 2.5 and SE[2] <= 5.0:
 		JS = 2
-	elif RMS < 0.15 and ERH <= 1 and SE[2] <= 2:
+	if RMS < 0.15 and ERH <= 1.0 and SE[2] <= 2.0:
 		JS = 1
 
 	# TODO: we should recompute AZ and GAP with new location
 	JD = 4
-	if NO > 6:
+	if NO >= 6:
+		# Note: independent thresholds (sequential IFs in Fortran)
 		if GAP <= 180 and DMIN <= 50:
 			JD = 3
-		elif GAP <= 135 and DMIN <= TFD:
+		if GAP <= 135 and DMIN <= TFD:
 			JD = 2
-		elif GAP <= 90 and DMIN <= OFD:
+		if GAP <= 90 and DMIN <= OFD:
 			JD = 1
 
 	JAV = (JS + JD + 1) // 2

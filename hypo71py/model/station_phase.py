@@ -13,7 +13,28 @@ __all__ = [
     "PhasePick",
     "Station",
     "StationPhases",
+    "bare_sta",
 ]
+
+
+def bare_sta(code: str) -> str:
+    """
+    Return just the station part of any SEED-style code.
+
+    Works for all common formats::
+
+        'ABM1Y'          → 'ABM1Y'   # bare code — unchanged
+        'AW.ABM1Y'       → 'ABM1Y'   # NET.STA
+        'AW.ABM1Y.00'    → 'ABM1Y'   # NET.STA.LOC  (uses STA part)
+        'AW.ABM1Y.00.HHZ'→ 'ABM1Y'   # full SEED    (uses STA part)
+
+    The second dot-separated field is always the SEED station code;
+    when there is no dot the whole string is returned as-is.
+    """
+    if '.' not in code:
+        return code
+    parts = code.split('.')
+    return parts[1] if len(parts) >= 2 else parts[-1]
 
 class PhasePick:
     """
@@ -105,6 +126,34 @@ class Station:
 		self.lat = lat
 		self.elevation = elevation
 		self.depth = depth
+
+	@property
+	def sta(self) -> str:
+		"""
+		Bare station code, regardless of how :attr:`code` was constructed.
+
+		Safe to use wherever a 4-char SEED station name is needed (e.g. HYPO71
+		fixed-format columns).  Examples::
+
+		    Station('ABM1Y', ...).sta        → 'ABM1Y'
+		    Station('AW.ABM1Y', ...).sta     → 'ABM1Y'
+		    Station('AW.ABM1Y.00', ...).sta  → 'ABM1Y'
+		"""
+		return bare_sta(self.code)
+
+	@property
+	def network(self) -> str | None:
+		"""
+		Network code if present in :attr:`code`, otherwise ``None``.
+
+		Examples::
+
+		    Station('ABM1Y', ...).network     → None
+		    Station('AW.ABM1Y', ...).network  → 'AW'
+		"""
+		if '.' not in self.code:
+			return None
+		return self.code.split('.')[0]
 
 
 class StationPhases(object):
@@ -306,10 +355,13 @@ class StationPhases(object):
 			station_phases.loc[s, 'depth'] = np.float32(station.depth)
 			station_phases.loc[s, 'stat_weight'] = 1
 
-			if not '.' in list(self.phase_picks.keys())[0]:
-				station_code = station.code.split('.')[-1]
-			else:
-				station_code = station.code
+			# Match the station against the phase_picks dict.  pick_dict keys may
+			# be bare codes ('ABM1Y') or NET.STA ('AW.ABM1Y').  Try the full
+			# station.code first; fall back to the bare station name so that
+			# e.g. Station('AW.ABM1Y') matches a pick_dict keyed by 'ABM1Y'.
+			station_code = station.code
+			if station_code not in self.phase_picks:
+				station_code = station.sta
 			picks = self.phase_picks.get(station_code, {})
 			Ppick = picks.get('P')
 			if Ppick and Ppick.include_in_loc:

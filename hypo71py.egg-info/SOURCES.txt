@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-hypo71py.egg-info/PKG-INFO
-hypo71py.egg-info/SOURCES.txt
-hypo71py.egg-info/dependency_links.txt
-hypo71py.egg-info/requires.txt
-hypo71py.egg-info/top_level.txt

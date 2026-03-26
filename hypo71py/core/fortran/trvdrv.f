@@ -18,14 +18,16 @@ C------- COMPUTE TRAVEL TIME AND DERIVATIVES FROM CRUSTAL MODEL --------
       real*8 wx,wy,wz,wf,wv,wg,wr,wh,wgx,wgy,wgz,w1,w2,w3,w4
       real*8 timz3
       common/provi/epsob,iflag
-      data indr/0/
 c---------------------------------------------------------------
          IF (ISW .EQ. '1   ') then
                 print *,'the variable first layer not implemented'
                 stop
         endif
 C-----------------------------------------------------------------------
-        if(indr.eq.0) then
+C     Recompute dxd/txd on every call so that switching velocity models
+C     between calls (e.g. halfspace -> two-layer) gives correct results.
+C     The original 'indr' guard cached these on the first call only, which
+C     caused state corruption when the velocity model changed.
         do kv=1,nv
             do lr=2,nl
                 do ls=1,nl
@@ -44,9 +46,6 @@ C                print *,lr,ls,ll,txd(kv,ls,lr),dxd(kv,ls,lr),tim,dim
                 enddo
             enddo
         enddo
-        indr=1
-C        print *, 'init done'
-        endif
         thk0=thk(1)
 C-----------------------------------------------------------------------
                                 IF (ISW .ne. '1   ') then
