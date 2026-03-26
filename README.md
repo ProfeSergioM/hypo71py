@@ -33,6 +33,37 @@ cd hypo71py
 pip install -e .
 ```
 
+### Fortran speedups (optional but recommended)
+
+The travel-time kernel (`TRVDRV`) and step-regression routine (`SWMREG`) can
+be compiled as f2py extensions for a significant speed improvement.
+Pre-compiled binaries for **macOS / Python 3.10** are included in the
+repository (`hypo71py/core/fortran/*.cpython-310-darwin.so`).  For any other
+platform or Python version, recompile from source:
+
+```bash
+cd hypo71py/core/fortran
+python -m numpy.f2py -c trvdrv.f tinorm.f -m trvdrv
+python -m numpy.f2py -c swmreg.f         -m swmreg
+```
+
+Requirements: `gfortran` (or another f2py-compatible Fortran compiler) and
+`numpy` with f2py support (included in the standard numpy installation).
+
+```bash
+# macOS — install gfortran via Homebrew
+brew install gcc
+
+# Linux
+sudo apt install gfortran   # Debian/Ubuntu
+sudo dnf install gcc-gfortran  # Fedora/RHEL
+```
+
+After compilation the `.so` files will appear in `hypo71py/core/fortran/` and
+will be picked up automatically.  Pass `use_fortran_speedups=True` (the
+default) to `SINGLE` to use them, or `False` to fall back to the pure-Python
+implementation.
+
 ---
 
 ## Scope and Intent
