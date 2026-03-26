@@ -84,18 +84,16 @@ def _run_fortran(work_dir):
 
 
 def _run_python(stations, picks, vel_model, ztr=5.0, pos=1.73,
-                use_s=False):
+                use_s=False, use_s_minus_p=False):
     """
     Run Python SINGLE and return (lon, lat, depth, rms).
     """
-    # Build pick_dict: pass PhasePick objects through as-is;
-    # drop S picks if use_s=False
     pick_dict = {}
     for code, ph in picks.items():
         entry = {}
         if ph.get('P') is not None:
             entry['P'] = ph['P']
-        if use_s and ph.get('S') is not None:
+        if (use_s or use_s_minus_p) and ph.get('S') is not None:
             entry['S'] = ph['S']
         if entry:
             pick_dict[code] = entry
@@ -106,6 +104,7 @@ def _run_python(stations, picks, vel_model, ztr=5.0, pos=1.73,
         velocity_model=vel_model,
         ZTR=ztr,
         use_s_picks=use_s,
+        use_s_minus_p=use_s_minus_p,
         azimuthal_weighting=True,
         verbose=0,
     )
@@ -114,23 +113,27 @@ def _run_python(stations, picks, vel_model, ztr=5.0, pos=1.73,
 
 
 def _fortran_solution(stations, picks, vel_model, ztr=5.0, pos=1.73,
-                      use_s=False):
+                      use_s=False, use_s_minus_p=False):
     """
     Write a HYPO71.INP in a temp dir, run the Fortran, parse the punch file.
     Returns (lon, lat, depth, rms) or raises AssertionError if no solution.
+
+    When use_s_minus_p=True, phase cards are written with P weight digit = 5,
+    which triggers KSMP(L)=1 in HYPO71 INPUT2.  Both P and S times are written
+    so the Fortran can compute TS-TP internally.
     """
-    # Filter to picks that exist and optionally drop S
     filtered = {}
     for code, ph in picks.items():
         entry = {'P': ph.get('P')}
-        if use_s:
+        if use_s or use_s_minus_p:
             entry['S'] = ph.get('S')
         filtered[code] = entry
 
     with tempfile.TemporaryDirectory() as tmp:
         inp = Path(tmp) / 'HYPO71.INP'
         write_hypo71_input(inp, stations, filtered, vel_model,
-                           ztr=ztr, pos=pos, use_s=use_s)
+                           ztr=ztr, pos=pos, use_s=use_s,
+                           use_s_minus_p=use_s_minus_p)
 
         proc = _run_fortran(tmp)
         assert proc.returncode == 0, (
@@ -368,3 +371,112 @@ class TestFixedDepth:
         assert abs(py_lat   - self.TRUE_LAT)   < TOL_LAT_DEG
         assert abs(py_depth - self.TRUE_DEPTH) < 0.01   # depth is fixed
         assert py_rms < TOL_TRUE_RMS  # float32 precision in synthetic picks
+
+
+# ---------------------------------------------------------------------------
+# Test 4: S-P interval location
+# ---------------------------------------------------------------------------
+
+class TestSPInterval:
+    """
+    S-P interval location using a two-layer model with P and S picks.
+
+    In S-P mode the absolute origin time cancels out of every observation
+    equation, so only epicentre and depth are constrained by the data.
+    A 6-station ring at 40 km radius gives good azimuthal coverage; depth
+    is constrained by the differential travel-time sensitivity.
+
+    Three sub-tests:
+      1. Python use_s_minus_p=True recovers the true hypocenter.
+      2. Python S-P solution ≈ Python absolute P+S solution (same picks,
+         no noise → should agree to within numerical precision).
+      3. Python S-P solution ≈ Fortran S-P solution (P weight digit 5
+         triggers KSMP=1 in HYPO71 INPUT2).
+
+    True location chosen in N hemisphere, E longitude to avoid Fortran
+    punch-format sign ambiguity (same choice as TestTwoLayerWithS).
+    """
+
+    TRUE_LON    = 138.0
+    TRUE_LAT    =  35.0
+    TRUE_DEPTH  =  12.0   # km — below interface for good S-P sensitivity
+    TRUE_ORIGIN = UTCDateTime('2020-01-01T12:00:00.0')
+    ZTR = 5.0
+
+    # Tight tolerances — S-P with exact picks is a well-constrained problem.
+    # These are set at ~10× measured errors to absorb minor platform variation.
+    TOL_LON   = 0.01   # deg
+    TOL_LAT   = 0.01   # deg
+    TOL_DEPTH = 0.5    # km  — looser than P+S; origin time is free
+    TOL_RMS   = 0.02   # s
+
+    # Agreement between Python S-P and Python absolute P+S (noise-free):
+    # solutions should be very close since the data is identical.
+    TOL_AGREE_LON   = 0.001
+    TOL_AGREE_LAT   = 0.001
+    TOL_AGREE_DEPTH = 0.5
+
+    @pytest.fixture(autouse=True, scope='class')
+    def setup(self, fortran_available):
+        pass
+
+    @pytest.fixture(scope='class')
+    def scenario(self):
+        vel  = two_layer_model(vp1=6.0, vp2=7.5, interface_km=15.0)
+        stas = make_stations_ring(self.TRUE_LON, self.TRUE_LAT,
+                                  n=6, radius_km=40.0)
+        picks = make_synthetic_picks(
+            self.TRUE_LON, self.TRUE_LAT, self.TRUE_DEPTH,
+            self.TRUE_ORIGIN, stas, vel, include_s=True,
+        )
+        return stas, picks, vel
+
+    def test_python_sp_recovers_true_location(self, scenario):
+        """Python S-P mode should recover the input hypocenter."""
+        stas, picks, vel = scenario
+        lon, lat, depth, rms = _run_python(stas, picks, vel,
+                                           ztr=self.ZTR,
+                                           use_s_minus_p=True)
+        assert abs(lon   - self.TRUE_LON)   < self.TOL_LON,   f"Lon off: {lon:.4f} vs {self.TRUE_LON}"
+        assert abs(lat   - self.TRUE_LAT)   < self.TOL_LAT,   f"Lat off: {lat:.4f} vs {self.TRUE_LAT}"
+        assert abs(depth - self.TRUE_DEPTH) < self.TOL_DEPTH, f"Depth off: {depth:.3f} vs {self.TRUE_DEPTH}"
+        assert rms < self.TOL_RMS, f"RMS too large: {rms:.4f} s"
+
+    def test_python_sp_matches_absolute_ps(self, scenario):
+        """
+        With noise-free synthetic picks, S-P and absolute P+S should agree.
+
+        Both use the same travel times computed from the same TRVDRV call,
+        so the solutions should converge to the same hypocenter.
+        """
+        stas, picks, vel = scenario
+        lon_abs, lat_abs, depth_abs, _ = _run_python(stas, picks, vel,
+                                                     ztr=self.ZTR,
+                                                     use_s=True)
+        lon_sp,  lat_sp,  depth_sp,  _ = _run_python(stas, picks, vel,
+                                                      ztr=self.ZTR,
+                                                      use_s_minus_p=True)
+
+        assert abs(lon_sp   - lon_abs)   < self.TOL_AGREE_LON,   \
+            f"Lon: sp={lon_sp:.5f} abs={lon_abs:.5f}"
+        assert abs(lat_sp   - lat_abs)   < self.TOL_AGREE_LAT,   \
+            f"Lat: sp={lat_sp:.5f} abs={lat_abs:.5f}"
+        assert abs(depth_sp - depth_abs) < self.TOL_AGREE_DEPTH, \
+            f"Depth: sp={depth_sp:.3f} abs={depth_abs:.3f}"
+
+    def test_python_sp_matches_fortran_sp(self, scenario):
+        """Python and Fortran S-P solutions should agree to within tolerance."""
+        stas, picks, vel = scenario
+        py_lon, py_lat, py_depth, py_rms = _run_python(
+            stas, picks, vel, ztr=self.ZTR, use_s_minus_p=True)
+        ft_lon, ft_lat, ft_depth, ft_rms = _fortran_solution(
+            stas, picks, vel, ztr=self.ZTR, use_s_minus_p=True)
+
+        assert abs(py_lon   - ft_lon)   < self.TOL_LON,   \
+            f"Lon:   py={py_lon:.4f} ft={ft_lon:.4f}"
+        assert abs(py_lat   - ft_lat)   < self.TOL_LAT,   \
+            f"Lat:   py={py_lat:.4f} ft={ft_lat:.4f}"
+        assert abs(py_depth - ft_depth) < self.TOL_DEPTH, \
+            f"Depth: py={py_depth:.3f} ft={ft_depth:.3f}"
+        assert abs(py_rms   - ft_rms)   < self.TOL_RMS,   \
+            f"RMS:   py={py_rms:.4f} ft={ft_rms:.4f}"

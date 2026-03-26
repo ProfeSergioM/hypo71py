@@ -41,7 +41,8 @@ def _deg_to_degmin(decimal_deg):
 
 
 def write_hypo71_input(path, stations, picks, velocity_model,
-                       ztr=5.0, pos=1.73, xnear=50., xfar=200., use_s=False):
+                       ztr=5.0, pos=1.73, xnear=50., xfar=200., use_s=False,
+                       use_s_minus_p=False):
     """
     Write a HYPO71PC input file.
 
@@ -61,6 +62,11 @@ def write_hypo71_input(path, stations, picks, velocity_model,
         Vp/Vs ratio.
     xnear, xfar : float
         Distance-weighting limits (km).
+    use_s_minus_p : bool
+        If True, write phase cards with P weight digit = 5 for stations that
+        have both P and S picks.  Weight digit > 4 → W = (4-w)/4 < 0, which
+        triggers KSMP(L)=1 in HYPO71's INPUT2.  Both absolute P and S times
+        are still written; the Fortran computes TS-TP internally.
     """
     lines = []
 
@@ -106,7 +112,7 @@ def write_hypo71_input(path, stations, picks, velocity_model,
 
         line  = ' '                        # col  1: 1X
         line += ' '                        # col  2: IW (blank = normal weight)
-        line += f'{sta.code[:4]:<4s}'        # cols 3-6 (HYPO71 station names are 4 chars max)
+        line += f'{sta.sta[:4]:<4s}'          # cols 3-6 (HYPO71 station names are 4 chars max)
         line += f'{lat_deg:2d}'            # cols 7-8
         line += f'{lat_min:5.2f}'          # cols 9-13
         line += ns                         # col 14
@@ -217,8 +223,7 @@ def write_hypo71_input(path, stations, picks, velocity_model,
     ref_hour = ref_p.hour
 
     for sta in stations:
-        code = sta.code
-        phase = picks.get(code, {})
+        phase = picks.get(sta.code, {}) or picks.get(sta.sta, {})
         p_time = _as_utc(phase.get('P'))
         s_time = _as_utc(phase.get('S'))
 
@@ -231,16 +236,18 @@ def write_hypo71_input(path, stations, picks, velocity_model,
         # Build an 80-character card as a list for easy column assignment
         card = [' '] * 80
 
-        # Cols 1-4 (idx 0-3): station name
-        card[0:4] = list(f'{code:<4s}'[:4])
+        # Cols 1-4 (idx 0-3): station name — use bare sta name to match station list
+        card[0:4] = list(f'{sta.sta[:4]:<4s}')
 
         # Cols 5-6 (idx 4-5): onset 'I' + phase 'P'
         card[4] = 'I'
         card[5] = 'P'
         # Col 7 (idx 6): first motion — blank
         card[6] = ' '
-        # Col 8 (idx 7): P weight = 0 (full)
-        card[7] = '0'
+        # Col 8 (idx 7): P weight digit.
+        # Weight digit > 4 → (4-w)/4 < 0 → HYPO71 triggers KSMP(L)=1 (S-P mode).
+        # Both absolute P and S times are still written; the Fortran computes TS-TP.
+        card[7] = '5' if (use_s_minus_p and s_time is not None) else '0'
         # Col 9 (idx 8): blank
         card[8] = ' '
 

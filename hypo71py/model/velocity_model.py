@@ -1315,7 +1315,8 @@ class CrustalVelocityModel:
 
         return ax
 
-    def perturb(self, depth_factor=0.1, vel_factor=0.05, vpvs_scale=1.75, name_suffix="_pert"):
+    def perturb(self, depth_factor=0.1, vel_factor=0.05, vpvs_scale=1.75,
+                name_suffix="_pert", seed=None):
                 """
                 Randomly perturb layer depths and velocities in this CrustalVelocityModel.
 
@@ -1329,12 +1330,17 @@ class CrustalVelocityModel:
                     Fixed Vp/Vs ratio to compute Vs from perturbed Vp.
                 name_suffix : str
                     Optional suffix to append to model name for identification.
+                seed : int or None
+                    Seed for the random number generator.  Pass an integer for
+                    reproducible perturbations; None (default) gives a different
+                    result each call.
 
                 Returns
                 -------
                 perturbed : CrustalVelocityModel
                     New velocity model instance with perturbed parameters.
                 """
+                rng = np.random.default_rng(seed)
                 perturbed = deepcopy(self)
 
                 # --- Perturb depths but keep top and bottom fixed ---
@@ -1342,12 +1348,12 @@ class CrustalVelocityModel:
                 top, bottom = depths[0], depths[-1]
                 inner = depths[1:-1]
                 thickness = np.diff(depths)
-                inner += np.random.uniform(-depth_factor, depth_factor, size=len(inner)) * thickness[:-1]
+                inner += rng.uniform(-depth_factor, depth_factor, size=len(inner)) * thickness[:-1]
                 new_depths = np.concatenate(([top], np.clip(inner, top, bottom), [bottom]))
 
                 # --- Perturb velocities ---
                 vp = np.array(self.VP, dtype=float)
-                pert_vp = vp * (1 + np.random.uniform(-vel_factor, vel_factor, size=len(vp)))
+                pert_vp = vp * (1 + rng.uniform(-vel_factor, vel_factor, size=len(vp)))
                 pert_vs = pert_vp / vpvs_scale
 
                 # --- Assign new fields ---
