@@ -1,0 +1,4 @@
+*.so
+*.cpython-*.so
+__pycache__/
+*.pyc
