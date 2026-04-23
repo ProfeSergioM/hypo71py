@@ -1,35 +1,13 @@
-# Python bytecode
+# Compiled Python/Fortran extensions
+*.so
+*.pyd
+*.cpython-*.so
+
+# Python cache
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 
-# f2py / Cython build artifacts (object files, C wrappers)
-*.o
-*.c
-*-f2pywrappers*.f
-
-# Compiled Fortran extensions are tracked intentionally
-# (trvdrv.cpython-*.so, swmreg.cpython-*.so) — do not add *.so here
-
-# Hypo71PC Fortran binary and build products
-Hypo71PC/
-
-# Package build / install
-*.egg-info/
-dist/
+# Builds
 build/
-*.egg
-
-# Jupyter
-.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
-
-# macOS
-.DS_Store
-**/.DS_Store
-
-# Editor / IDE
-.vscode/
-.idea/
-*.swp
-*~
+dist/
