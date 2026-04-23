@@ -1,13 +1,8 @@
-# Compiled Python/Fortran extensions
 *.so
-*.pyd
 *.cpython-*.so
-
-# Python cache
+*.pyd
 __pycache__/
 *.pyc
 *.pyo
-
-# Builds
 build/
 dist/
